@@ -369,7 +369,7 @@ DBC 矩阵配置表，定义 CAN 通信协议。
 
 ```bash
 # 1. 进入工具目录
-cd <YOUR_PROJECT_PATH>/STM32_AUTOSAR/tools
+cd <your-project-path>/STM32_AUTOSAR/tools
 
 # 2. 配置 CAN 接口
 sudo ./debug_tools/setup_can.sh can0 500000
