@@ -17,6 +17,7 @@ An AUTOSAR communication stack demonstration project based on STM32F407, support
 - [Build Instructions](#-build-instructions)
 - [CAN Tools Setup](#-can-tools-setup)
 - [UDS Diagnostics](#-uds-diagnostics)
+- [Bootloader & OTA Update](#-bootloader--ota-update)
 - [Code Generators](#-code-generators)
 - [Troubleshooting](#-troubleshooting)
 - [Follow Us](#-follow-us)
@@ -29,6 +30,7 @@ An AUTOSAR communication stack demonstration project based on STM32F407, support
 - **CAN Communication**: Support standard and extended frames, 500Kbps baudrate
 - **DBC Code Generator**: Auto-generate CAN signal packing/unpacking code from Excel
 - **UDS Diagnostics**: Support 0x10, 0x11, 0x22, 0x2E, 0x27, 0x3E services
+- **Bootloader & OTA**: UDS-based firmware update with 64KB Bootloader + 960KB App
 - **Serial Debug**: USART1 115200bps with full debug logging
 - **LED Control**: Support 3 LED status indicators
 
@@ -181,8 +183,20 @@ STM32_AUTOSAR/
 │   └── utils/             # Utilities
 │       ├── DebugLog.c     # Debug logging
 │       └── DbcHandler.c   # DBC handling
+├── bootloader/            # Bootloader for OTA updates
+│   ├── src/              # Bootloader source
+│   │   ├── main_bootloader.c
+│   │   ├── boot.c        # Boot logic
+│   │   ├── flash_drv.c   # Flash driver
+│   │   ├── crc32.c       # CRC checksum
+│   │   └── uds_bootloader.c
+│   ├── include/          # Bootloader headers
+│   ├── ld/               # Bootloader linker script
+│   └── CMakeLists.txt    # Bootloader build config
 ├── include/               # Header files
 ├── ld/                    # Linker scripts
+│   ├── STM32F407ZGTx_FLASH.ld      # App (0x08010000)
+│   └── STM32F407_Bootloader.ld     # Bootloader (0x08000000)
 ├── tools/                 # Development tools
 │   ├── code_generators/   # Code generators
 │   │   ├── dbc_generator.py
@@ -355,6 +369,134 @@ python3 diag_test.py can0
 
 ---
 
+## 🔧 Bootloader & OTA Update
+
+### Memory Layout
+
+The project includes a **Bootloader** for Over-The-Air (OTA) firmware updates:
+
+```
+Flash Memory Map (STM32F407 1MB):
+┌─────────────────────┬────────────────────────────────────┐
+│   0x0800 0000       │  Bootloader (64KB)                 │
+│   - 0x0800 FFFF     │  • UDS programming services        │
+│                     │  • Flash driver                    │
+│                     │  • App validation & jump           │
+├─────────────────────┼────────────────────────────────────┤
+│   0x0801 0000       │  Application (960KB)               │
+│   - 0x080F FFFF     │  • AUTOSAR stack                   │
+│                     │  • CAN communication               │
+│                     │  • User application                │
+├─────────────────────┼────────────────────────────────────┤
+│   0x080F FFF0       │  App Valid Flag (16 bytes)         │
+│   - 0x080F FFFF     │  • 0x5A5A = Valid App              │
+│                     │  • Other = Invalid, stay in Boot   │
+└─────────────────────┴────────────────────────────────────┘
+```
+
+### Building the Bootloader
+
+```bash
+cd bootloader
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+
+# Output files:
+# - Bootloader.elf  (with debug info)
+# - Bootloader.bin  (binary for flashing)
+# - Bootloader.hex  (Intel Hex)
+```
+
+### Flashing Bootloader + Application
+
+```bash
+# 1. Flash Bootloader to 0x08000000
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "program bootloader/build/Bootloader.bin 0x08000000 verify reset exit"
+
+# 2. Flash Application to 0x08010000
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "program build/STM32F407_CAN.bin 0x08010000 verify exit"
+
+# 3. Set App Valid Flag (0x5A5A at 0x080FFFF0)
+# The flag indicates a valid application is present
+# Without this flag, Bootloader will not jump to App
+```
+
+### UDS Programming Services
+
+The Bootloader supports ISO 14229 UDS services for firmware updates:
+
+| SID | Service | Description |
+|-----|---------|-------------|
+| 0x10 | DiagnosticSessionControl | Switch to Programming Session |
+| 0x11 | ECUReset | Reset after programming |
+| 0x27 | SecurityAccess | Unlock for programming |
+| 0x31 | RoutineControl | Erase memory / Check CRC |
+| 0x34 | RequestDownload | Start firmware download |
+| 0x36 | TransferData | Transfer firmware data |
+| 0x37 | RequestTransferExit | Complete download |
+
+### Programming Sequence
+
+```
+Diagnostic Tool                     ECU (Bootloader)
+    │                                       │
+    ├─ $10 02 (Programming Session) ──────>│
+    │<─────────────────────────────────────┤
+    │  $50 02                              │
+    │                                       │
+    ├─ $27 07 (Request Seed) ─────────────>│
+    │<─────────────────────────────────────┤
+    │  $67 07 [Seed]                       │
+    │                                       │
+    ├─ $27 08 [Key] ──────────────────────>│
+    │<─────────────────────────────────────┤
+    │  $67 08 (Unlock Success)             │
+    │                                       │
+    ├─ $31 01 FF01 (Erase Memory) ────────>│
+    │<─────────────────────────────────────┤
+    │  $71 01 FF01 00                      │
+    │                                       │
+    ├─ $34 [Addr][Size] (Request Download)├>│
+    │<─────────────────────────────────────┤
+    │  $74 [Max Block Len]                 │
+    │                                       │
+    ├─ $36 [Block#][Data...] ─────────────>│
+    │<─────────────────────────────────────┤
+    │  $76 [Block#] (repeat until done)    │
+    │                                       │
+    ├─ $37 (Transfer Exit) ───────────────>│
+    │<─────────────────────────────────────┤
+    │  $77                                 │
+    │                                       │
+    ├─ $31 01 FF01 [CRC] (Verify) ────────>│
+    │<─────────────────────────────────────┤
+    │  $71 01 FF01 00 (CRC OK)             │
+    │                                       │
+    ├─ $11 01 (ECU Reset) ────────────────>│
+    │<─────────────────────────────────────┤
+    │  $51 01                              │
+    │         [Reset → Jump to new App]    │
+```
+
+### Bootloader Testing
+
+```bash
+# Test entering Bootloader mode (no valid App)
+# 1. Erase App Valid Flag
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "init; reset halt; flash erase_sector 0 11 11; reset run; shutdown"
+
+# 2. Reset - ECU will stay in Bootloader, ready for programming
+```
+
+---
+
 ## 🎨 Code Generators
 
 ### DBC Generator
@@ -437,6 +579,28 @@ sudo usermod -a -G dialout $USER
 # Or use ST-Link
 cmake .. -DINTERFACE_CFG="interface/stlink.cfg"
 ```
+
+**Q: Firmware flashed successfully but device not working**
+```bash
+# This usually happens when using ELF file with wrong base address
+# Check your firmware's vector table address:
+arm-none-eabi-readelf -S firmware.elf | grep ".isr_vector"
+
+# If address is not 0x08000000 (or 0x08010000 for App), use BIN file instead:
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "program firmware.bin 0x08000000 verify reset exit"
+```
+
+**Q: Bootloader doesn't jump to Application**
+```bash
+# Check if App Valid Flag is set at 0x080FFFF0
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "init; reset halt; mdw 0x080FFFF0; shutdown"
+
+# Expected: 0x00005A5A
+# If not set, the Bootloader will stay in programming mode
 
 ### Serial Issues
 

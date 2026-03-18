@@ -83,6 +83,15 @@ add_compile_options(
 # Target name
 set(TARGET_NAME "${PROJECT_NAME}")
 
+# App Version (for OTA upgrade verification)
+set(APP_VERSION_MAJOR "1" CACHE STRING "App Major Version")
+set(APP_VERSION_MINOR "0" CACHE STRING "App Minor Version")
+add_compile_definitions(
+    APP_VERSION_MAJOR=${APP_VERSION_MAJOR}
+    APP_VERSION_MINOR=${APP_VERSION_MINOR}
+)
+message(STATUS "App Version: ${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}")
+
 # AUTOSAR Integration Option
 option(ENABLE_AUTOSAR "Enable AUTOSAR stack integration" ON)
 
@@ -94,6 +103,7 @@ set(SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/drivers/CanDriver.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/DebugLog.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/DbcHandler.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/BootloaderJump.c
 )
 
 # Include directories
@@ -196,17 +206,18 @@ add_custom_target(flash
     DEPENDS ${TARGET_NAME}.elf
 )
 
-# Flash via OpenOCD with specific address (for bootloader)
-add_custom_target(flash-bin
-    COMMENT "Flashing BIN file via OpenOCD (J-Link SWD)..."
+# Flash App via OpenOCD with specific address (for use with Bootloader)
+# Note: App starts at 0x08010000 (after 64KB Bootloader)
+add_custom_target(flash-app
+    COMMENT "Flashing Application to 0x08010000 via OpenOCD (J-Link SWD)..."
     COMMAND openocd
         -f interface/jlink.cfg
         -c "transport select swd"
         -f target/stm32f4x.cfg
         -c "init"
         -c "reset halt"
-        -c "flash write_image erase ${TARGET_NAME}.bin 0x08000000"
-        -c "verify_image ${TARGET_NAME}.bin 0x08000000"
+        -c "flash write_image erase ${TARGET_NAME}.bin 0x08010000"
+        -c "verify_image ${TARGET_NAME}.bin 0x08010000"
         -c "reset run"
         -c "shutdown"
     DEPENDS ${TARGET_NAME}.elf

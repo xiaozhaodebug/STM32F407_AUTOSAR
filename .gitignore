@@ -1,5 +1,6 @@
 # Build outputs
 build/
+build_*/
 Build/
 Debug/
 Release/
@@ -52,15 +53,20 @@ doxygen/
 # Test outputs
 test-results/
 coverage/
+test_reports/
+ota_images/
 
-# Sensitive files (DO NOT COMMIT)
-*.key
-*.pem
-*.crt
-.env
-.env.local
-secrets/
-credentials/
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Backup files
+*.orig
+*.bak
+*~
 
 # OS files
 *.DS_Store

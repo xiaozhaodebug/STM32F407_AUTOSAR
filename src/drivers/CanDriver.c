@@ -430,8 +430,10 @@ CanStatus CanDriver_SetFilter(uint32_t filterId, uint32_t mask, uint8_t isExtId)
  *                                      中断处理
 ==================================================================================================*/
 
-/* 前向声明CanIf_RxIndication */
+/* 前向声明CanIf_RxIndication (仅在 AUTOSAR 模式下使用) */
+#ifdef ENABLE_AUTOSAR
 extern void CanIf_RxIndication(uint8_t Hrh, uint32_t CanId, uint8_t CanDlc, const uint8_t* CanSduPtr);
+#endif
 
 /**
  * @brief  CAN1 RX0中断服务程序
@@ -486,6 +488,8 @@ void CAN1_RX0_IRQHandler(void)
     /* 释放FIFO */
     CAN1_RF0R |= CAN_RF0R_RFOM0;
     
+#ifdef ENABLE_AUTOSAR
     /* 调用CanIf接收指示 */
     CanIf_RxIndication(0, rxMsg.Id, rxMsg.Dlc, data);
+#endif
 }

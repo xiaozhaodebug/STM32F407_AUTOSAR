@@ -1,49 +1,38 @@
 /*
- * STM32F407ZGTx Application Linker Script
- * Target: STM32F407ZGT6 (1MB Flash, 192KB SRAM)
- * 
- * Memory Layout with Bootloader:
- *   Bootloader: 0x08000000 - 0x0800FFFF (64KB)
- *   FLASH:      0x08010000 - 0x080FFFFF (960KB)  <- App starts here
- *   RAM:        0x20000000 - 0x2002FFFF (192KB)
- *   CCM:        0x10000000 - 0x1000FFFF (64KB)
+ * STM32F407 Bootloader Linker Script
+ * Target: STM32F407ZGT6
+ * Bootloader: 0x08000000 - 0x0800FFFF (64KB)
+ * App Start: 0x08010000
  */
 
-/* Entry point */
 ENTRY(Reset_Handler)
 
-/* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);
 
-/* Generate a link error if heap and stack don't fit into RAM */
 __min_heap_size = 0x200;
 __min_stack_size = 0x400;
 
-/* Memory regions */
 MEMORY
 {
-    /* Application Flash - starts at 0x08010000 (after 64KB Bootloader) */
-    FLASH (rx)      : ORIGIN = 0x08010000, LENGTH = 960K
+    /* Bootloader Flash - 前64KB (0x08000000 - 0x0800FFFF) */
+    BOOT_FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K
     
-    /* SRAM - Main RAM */
+    /* RAM */
     RAM (rwx)       : ORIGIN = 0x20000000, LENGTH = 128K
-    
-    /* CCM RAM - Core Coupled Memory (not accessible by DMA) */
     CCM (rwx)       : ORIGIN = 0x10000000, LENGTH = 64K
 }
 
-/* Sections */
 SECTIONS
 {
-    /* Vector table - must be at start of flash */
+    /* 中断向量表 */
     .isr_vector :
     {
         . = ALIGN(4);
         KEEP(*(.isr_vector))
         . = ALIGN(4);
-    } > FLASH
+    } > BOOT_FLASH
 
-    /* Program code */
+    /* 代码段 */
     .text :
     {
         . = ALIGN(4);
@@ -58,22 +47,22 @@ SECTIONS
         
         . = ALIGN(4);
         _etext = .;
-    } > FLASH
+    } > BOOT_FLASH
 
-    /* Constant data */
+    /* 只读数据 */
     .rodata :
     {
         . = ALIGN(4);
         *(.rodata)
         *(.rodata*)
         . = ALIGN(4);
-    } > FLASH
+    } > BOOT_FLASH
 
     /* ARM exception unwinding section */
     .ARM.extab :
     {
         *(.ARM.extab* .gnu.linkonce.armextab.*)
-    } > FLASH
+    } > BOOT_FLASH
 
     /* ARM index table */
     .ARM :
@@ -81,9 +70,9 @@ SECTIONS
         __exidx_start = .;
         *(.ARM.exidx*)
         __exidx_end = .;
-    } > FLASH
+    } > BOOT_FLASH
 
-    /* Pre-initialized data - loaded at end of flash, copied to RAM at startup */
+    /* Pre-initialized data */
     _sidata = LOADADDR(.data);
 
     .data :
@@ -95,9 +84,9 @@ SECTIONS
         
         . = ALIGN(4);
         _edata = .;
-    } > RAM AT> FLASH
+    } > RAM AT> BOOT_FLASH
 
-    /* Uninitialized data - zeroed at startup */
+    /* Uninitialized data */
     .bss :
     {
         . = ALIGN(4);
@@ -133,6 +122,5 @@ SECTIONS
         libgcc.a(*)
     }
 
-    /* ARM debug sections */
     .ARM.attributes 0 : { *(.ARM.attributes) }
 }
