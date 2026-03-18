@@ -16,6 +16,7 @@
 - **CAN 通信**：支持标准帧和扩展帧，波特率 500Kbps
 - **DBC 代码生成器**：从 Excel 自动生成 CAN 信号解析/打包代码
 - **UDS 诊断**：支持 0x10, 0x11, 0x22, 0x2E, 0x27, 0x3E 服务
+- **Bootloader & OTA 升级**：支持 UDS 远程刷写，64KB Bootloader + 960KB App 双分区
 - **串口调试**：USART1 115200bps，带完整调试日志
 - **LED 控制**：支持 3 个 LED 状态指示
 
@@ -92,6 +93,16 @@ STM32_AUTOSAR/
 │   ├── EcuM/            # ECU 状态管理
 │   ├── Std/             # 标准类型定义
 │   └── AUTOSAR_Cfg.h    # 配置文件
+├── bootloader/          # Bootloader 目录
+│   ├── src/             # 源码
+│   │   ├── main_bootloader.c   # 主程序
+│   │   ├── boot.c             # 启动逻辑
+│   │   ├── flash_drv.c        # Flash 驱动
+│   │   ├── crc32.c            # CRC 校验
+│   │   └── uds_bootloader.c   # UDS 服务
+│   ├── include/         # 头文件
+│   ├── ld/              # Bootloader 链接脚本
+│   └── CMakeLists.txt   # 构建配置
 ├── src/
 │   ├── board/           # 板级支持
 │   │   ├── main.c       # 主程序
@@ -100,10 +111,15 @@ STM32_AUTOSAR/
 │   ├── drivers/         # 设备驱动
 │   │   └── CanDriver.c  # CAN 驱动
 │   └── utils/           # 工具函数
-│       └── DebugLog.c   # 调试日志
+│       ├── DebugLog.c   # 调试日志
+│       └── BootloaderJump.c  # 跳转到 Bootloader
 ├── include/             # 头文件
+│   └── BootloaderJump.h # 跳转功能头文件
 ├── ld/                  # 链接脚本
+│   ├── STM32F407ZGTx_FLASH.ld      # App (0x08010000)
+│   └── STM32F407_Bootloader.ld     # Bootloader (0x08000000)
 ├── tools/               # 工具脚本
+├── ota_updater.py       # OTA 升级工具
 ├── docs/                # 文档
 ├── examples/            # 示例代码
 └── tests/               # 测试脚本
@@ -512,6 +528,132 @@ LED: PE3, PE4, PG9 (Low Active)
 | 0x2E | 写入 DID | 写入数据标识符 |
 | 0x27 | 安全访问 | 解锁安全等级 |
 | 0x3E | Tester Present | 保持会话活跃 |
+
+## 🔧 Bootloader & OTA 升级
+
+项目包含完整的 Bootloader 支持，可通过 UDS 协议进行 OTA（Over-The-Air）远程固件升级。
+
+### Flash 分区设计
+
+```
+Flash 内存布局 (STM32F407 1MB):
+┌─────────────────────┬────────────────────────────────────┐
+│   0x0800 0000       │  Bootloader (64KB)                 │
+│   - 0x0800 FFFF     │  • UDS 编程服务 ($34/$36/$37)      │
+│                     │  • Flash 驱动                      │
+│                     │  • App 验证与跳转                  │
+├─────────────────────┼────────────────────────────────────┤
+│   0x0801 0000       │  Application (960KB)               │
+│   - 0x080F FFFF     │  • AUTOSAR 协议栈                  │
+│                     │  • CAN 通信                        │
+│                     │  • 用户应用程序                    │
+├─────────────────────┼────────────────────────────────────┤
+│   0x080F FFF0       │  App Valid Flag (16 bytes)         │
+│   - 0x080F FFFF     │  • 0x5A5A = 有效 App               │
+│                     │  • 其他值 = 无效，停留在 Bootloader│
+└─────────────────────┴────────────────────────────────────┘
+```
+
+### 编译 Bootloader
+
+```bash
+cd bootloader
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+
+# 输出文件：
+# - Bootloader.elf  (带调试信息)
+# - Bootloader.bin  (二进制烧录文件)
+# - Bootloader.hex  (Intel Hex 格式)
+```
+
+### 烧录 Bootloader + App
+
+```bash
+# 1. 烧录 Bootloader 到 0x08000000
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "program bootloader/build/Bootloader.bin 0x08000000 verify reset exit"
+
+# 2. 烧录 App 到 0x08010000
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "program build/STM32F407_CAN.bin 0x08010000 verify exit"
+
+# 3. 设置 App Valid Flag (0x5A5A 在 0x080FFFF0)
+# 这个标志表示有有效的应用程序
+# 没有这个标志，Bootloader 不会跳转到 App
+```
+
+### OTA 升级流程
+
+**支持的服务 (ISO 14229 UDS):**
+
+| SID | 服务 | 描述 |
+|-----|------|------|
+| 0x10 | DiagnosticSessionControl | 切换到编程会话 |
+| 0x11 | ECUReset | 编程完成后复位 |
+| 0x27 | SecurityAccess | 解锁编程权限 |
+| 0x31 | RoutineControl | 擦除内存 / 检查 CRC |
+| 0x34 | RequestDownload | 开始固件下载 |
+| 0x36 | TransferData | 传输固件数据 |
+| 0x37 | RequestTransferExit | 完成下载 |
+
+**升级时序:**
+
+```
+诊断仪                              ECU (Bootloader)
+  │                                       │
+  ├─ $10 02 (编程会话) ─────────────────>│
+  │<─────────────────────────────────────┤
+  │  $50 02                              │
+  │                                       │
+  ├─ $27 07 (请求种子) ─────────────────>│
+  │<─────────────────────────────────────┤
+  │  $67 07 [种子]                       │
+  │                                       │
+  ├─ $27 08 [密钥] ─────────────────────>│
+  │<─────────────────────────────────────┤
+  │  $67 08 (解锁成功)                   │
+  │                                       │
+  ├─ $31 01 FF01 (擦除内存) ────────────>│
+  │<─────────────────────────────────────┤
+  │  $71 01 FF01 00                      │
+  │                                       │
+  ├─ $34 [地址][大小] (请求下载) ───────>│
+  │<─────────────────────────────────────┤
+  │  $74 [最大块长度]                    │
+  │                                       │
+  ├─ $36 [块序号][数据...] ─────────────>│
+  │<─────────────────────────────────────┤
+  │  $76 [块序号] (重复直到完成)         │
+  │                                       │
+  ├─ $37 (传输退出) ────────────────────>│
+  │<─────────────────────────────────────┤
+  │  $77                                 │
+  │                                       │
+  ├─ $31 01 FF01 [CRC] (验证) ──────────>│
+  │<─────────────────────────────────────┤
+  │  $71 01 FF01 00 (CRC 通过)           │
+  │                                       │
+  ├─ $11 01 (ECU 复位) ─────────────────>│
+  │<─────────────────────────────────────┤
+  │  $51 01                              │
+  │         [复位 → 跳转到新 App]        │
+```
+
+### 使用 Python 工具进行 OTA
+
+```bash
+# 进入 Bootloader 模式（擦除 Valid Flag）
+openocd -f interface/jlink.cfg -c "transport select swd" \
+    -f target/stm32f4x.cfg \
+    -c "init; reset halt; flash erase_sector 0 11 11; reset run; shutdown"
+
+# 运行 OTA 升级工具
+python3 ota_updater.py App_v2.0.bin
+```
 
 ## 配置说明
 

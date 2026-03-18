@@ -11,8 +11,33 @@
 
 - [ ] 添加 CAN FD 支持
 - [ ] 完善 UDS 安全访问服务
-- [ ] 添加 Bootloader 功能
+- [x] ~~添加 Bootloader 功能~~ (已在 v1.1.0 完成)
 - [ ] 支持更多诊断服务
+
+## [1.1.0] - 2026-03-18
+
+### 新增
+
+#### Bootloader & OTA 升级
+- 完整的 Bootloader 实现（64KB，起始地址 0x08000000）
+- UDS 编程服务支持（$10/$11/$27/$31/$34/$36/$37）
+- Flash 分区设计：64KB Bootloader + 960KB App
+- App Valid Flag 机制（0x080FFFF0）
+- Bootloader 到 App 的跳转逻辑
+- App 跳转到 Bootloader 功能
+- Python OTA 升级工具（`ota_updater.py`）
+
+#### 新文件
+- `bootloader/` 目录及全部源码
+- `ota_updater.py` OTA 升级脚本
+- `BootloaderJump.c/h` 跳转功能
+- `STM32F407_Bootloader.ld` Bootloader 链接脚本
+
+### 变更
+
+- 更新 App 链接脚本，起始地址改为 0x08010000
+- 更新 CMakeLists.txt，支持版本号定义（APP_VERSION_MAJOR/MINOR）
+- 更新 README，添加 OTA 升级说明
 
 ## [1.0.0] - 2026-03-15
 

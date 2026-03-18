@@ -235,7 +235,22 @@ STM32F407              LED电路
 
 ## 8. 存储器映射
 
-### 8.1 Flash 布局
+### 8.1 Flash 布局（带 Bootloader）
+
+OTA 升级功能启用后的分区设计：
+
+| 区域 | 地址范围 | 大小 | 用途 |
+|------|----------|------|------|
+| Bootloader | 0x0800_0000 - 0x0800_FFFF | 64KB | Bootloader 程序（含 UDS 服务） |
+| Application | 0x0801_0000 - 0x080F_EFFF | 960KB | 主应用程序 |
+| Valid Flag | 0x080F_FFF0 - 0x080F_FFFF | 16B | App 有效标志（0x5A5A = 有效） |
+
+**Bootloader 功能：**
+- 上电时检查 Valid Flag
+- Flag 有效（0x5A5A）：跳转到 App（0x08010000）
+- Flag 无效：停留在 Bootloader，等待 UDS 升级命令
+
+**传统分区（旧版本，仅供参考）：**
 
 | 区域 | 地址范围 | 大小 | 用途 |
 |------|----------|------|------|

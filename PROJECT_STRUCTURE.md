@@ -28,6 +28,21 @@ STM32F407_AUTOSAR/
 │   │   └── ComStack_Types.h
 │   ├── AUTOSAR_Cfg.h        # 配置文件
 │   └── AUTOSAR_Integration.c # 集成代码
+├── bootloader/              # Bootloader 目录 (OTA 升级)
+│   ├── src/                 # Bootloader 源码
+│   │   ├── main_bootloader.c    # Bootloader 主程序
+│   │   ├── boot.c               # 启动跳转逻辑
+│   │   ├── flash_drv.c          # Flash 驱动
+│   │   ├── crc32.c              # CRC 校验
+│   │   └── uds_bootloader.c     # UDS 编程服务
+│   ├── include/             # Bootloader 头文件
+│   │   ├── boot.h
+│   │   ├── flash_drv.h
+│   │   ├── crc32.h
+│   │   └── uds_bootloader.h
+│   ├── ld/                  # Bootloader 链接脚本
+│   │   └── STM32F407_Bootloader.ld
+│   └── CMakeLists.txt       # Bootloader 构建配置
 ├── src/                      # 源代码
 │   ├── board/               # 板级支持
 │   │   ├── main.c           # 主程序
@@ -36,12 +51,15 @@ STM32F407_AUTOSAR/
 │   ├── drivers/             # 设备驱动
 │   │   └── CanDriver.c      # CAN 驱动
 │   └── utils/               # 工具函数
-│       └── DebugLog.c       # 调试日志
+│       ├── DebugLog.c       # 调试日志
+│       └── BootloaderJump.c # 跳转到 Bootloader
 ├── include/                  # 头文件
 │   ├── CanDriver.h
-│   └── DebugLog.h
+│   ├── DebugLog.h
+│   └── BootloaderJump.h     # 跳转功能头文件
 ├── ld/                       # 链接脚本
-│   └── STM32F407ZGTx_FLASH.ld
+│   ├── STM32F407ZGTx_FLASH.ld       # App 链接脚本 (0x08010000)
+│   └── STM32F407_Bootloader.ld      # Bootloader 链接脚本 (0x08000000)
 ├── docs/                     # 文档
 │   ├── architecture.md      # 架构说明
 │   ├── api.md               # API 参考
@@ -54,7 +72,11 @@ STM32F407_AUTOSAR/
 ├── tools/                    # 工具脚本
 │   ├── flash.sh             # 烧录脚本
 │   ├── debug.sh             # 调试脚本
-│   └── setup_can.sh         # CAN 配置脚本
+│   ├── setup_can.sh         # CAN 配置脚本
+│   └── code_generators/     # 代码生成器
+│       ├── dbc_generator.py
+│       └── uds_generator/
+├── ota_updater.py           # OTA 升级 Python 工具
 ├── tests/                    # 测试代码
 ├── build/                    # 构建目录 (自动生成)
 ├── README.md                 # 项目说明
@@ -78,6 +100,36 @@ AUTOSAR 协议栈的核心实现，包含以下模块：
 - **EcuM**: ECU 状态管理，管理 ECU 状态和初始化序列
 - **Std**: 标准类型定义，包含 AUTOSAR 标准类型和宏定义
 
+### bootloader/
+
+Bootloader 目录，用于 OTA（Over-The-Air）远程固件升级：
+
+- **src/**: 源码文件
+  - `main_bootloader.c`: Bootloader 主程序（CAN 接收 + UDS 处理）
+  - `boot.c`: 启动逻辑（App 验证、跳转）
+  - `flash_drv.c`: Flash 读写驱动
+  - `crc32.c`: CRC32 校验算法
+  - `uds_bootloader.c`: UDS 编程服务（$34/$36/$37）
+- **include/**: 头文件
+- **ld/**: Bootloader 专用链接脚本（起始地址 0x08000000）
+- **CMakeLists.txt**: Bootloader 构建配置
+
+### src/
+
+源代码目录，包含：
+
+- **board/**: 板级支持代码
+  - `main.c`: 主程序入口
+  - `startup_stm32f407xx.s`: 启动汇编文件
+  - `system_stm32f4xx.c`: 系统时钟配置
+
+- **drivers/**: 设备驱动代码
+  - `CanDriver.c`: CAN1 硬件驱动实现
+
+- **utils/**: 工具函数
+  - `DebugLog.c`: 调试日志输出模块
+  - `BootloaderJump.c`: 跳转到 Bootloader 功能
+
 ### src/
 
 源代码目录，包含：
@@ -95,7 +147,12 @@ AUTOSAR 协议栈的核心实现，包含以下模块：
 
 ### include/
 
-公共头文件目录，包含驱动和工具的头文件。
+公共头文件目录，包含：
+
+- `CanDriver.h`: CAN 驱动头文件
+- `DebugLog.h`: 调试日志头文件
+- `BootloaderJump.h`: 跳转到 Bootloader 功能头文件
+- `DbcConfig.h`: DBC 配置头文件（代码生成器生成）
 
 ### docs/
 
@@ -120,10 +177,16 @@ AUTOSAR 协议栈的核心实现，包含以下模块：
 - `flash.sh`: 固件烧录脚本
 - `debug.sh`: 调试脚本
 - `setup_can.sh`: CAN 接口配置脚本
+- `code_generators/`: 代码生成器工具
+  - `dbc_generator.py`: DBC 代码生成器
+  - `uds_generator/`: UDS 配置生成器
 
 ### ld/
 
-链接脚本目录，包含 STM32F407 的链接配置。
+链接脚本目录，包含：
+
+- `STM32F407ZGTx_FLASH.ld`: App 链接脚本（起始地址 0x08010000）
+- `STM32F407_Bootloader.ld`: Bootloader 链接脚本（起始地址 0x08000000）
 
 ### build/
 
@@ -198,6 +261,18 @@ AUTOSAR 协议栈的核心实现，包含以下模块：
 - `.vscode/`, `.idea/`: IDE 配置
 - `*.o`, `*.elf`, `*.bin`, `*.hex`: 编译生成文件
 
+## 根目录文件
+
+- `README.md`: 项目主说明文档
+- `README_CN.md`: 中文说明文档
+- `LICENSE`: MIT 许可证
+- `CONTRIBUTING.md`: 贡献指南
+- `CHANGELOG.md`: 版本更新日志
+- `PROJECT_STRUCTURE.md`: 本文件（项目结构说明）
+- `HARDWARE_SPEC.md`: 硬件规格说明
+- `CMakeLists.txt`: CMake 构建配置
+- `ota_updater.py`: OTA 升级 Python 工具（UDS $34/$36/$37 刷写）
+
 ## 扩展建议
 
 添加新功能时，建议按以下方式组织：
@@ -207,3 +282,4 @@ AUTOSAR 协议栈的核心实现，包含以下模块：
 3. **新示例**: 添加到 `examples/`
 4. **新文档**: 添加到 `docs/`
 5. **新工具**: 添加到 `tools/`
+6. **Bootloader 功能**: 在 `bootloader/src/` 添加，并更新 `bootloader/include/` 头文件
